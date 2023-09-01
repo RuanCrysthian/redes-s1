@@ -43,67 +43,40 @@ class Enlace:
     def __init__(self, linha_serial):
         self.linha_serial = linha_serial
         self.linha_serial.registrar_recebedor(self.__raw_recv)
-        self.buffer = b''
+        self.buffer = b""
 
     def registrar_recebedor(self, callback):
         self.callback = callback
 
     def enviar(self, datagrama):
-        segmento = datagrama
-        if b'\xDB' in datagrama:
-            segmento = segmento.replace(b'\xDB', b'\xDB\xDD')
-        if b'\xc0' in datagrama:
-            segmento = segmento.replace(b'\xc0', b'\xDB\xDC')
-        self.linha_serial.enviar(b'\xc0' + segmento + b'\xc0')
+        self.linha_serial.enviar(self._escape_datagrama(datagrama))
+        pass
 
-    def send_callback(self, mensagem):
-        mensagem = mensagem.replace(b'\xdb\xdd', b'\xdb')
-        mensagem = mensagem.replace(b'\xdb\xdc', b'\xc0')
-        try:
-            self.callback(mensagem)
-        except:
-            import traceback
-            traceback.print_exc()
-        finally:
-            self.buffer = b''
-            
-    def __raw_recv(self, dados):      
-        #verificando mensagem vazia
-        if dados == b'\xc0':
-            if self.buffer != b'':
-                self.send_callback(self.buffer)
-                self.buffer = b''
-        else:
-            #verficando mensagem completa
-            if dados.endswith(b'\xc0') and self.buffer == b'':
-                mensagens = dados.split(b'\xc0')
-                for msg in mensagens:
-                    if msg != b'':
-                        self.buffer = b''
-                        self.send_callback(msg)
+    def __raw_recv(self, dados):
+        dados = self.buffer + dados
 
-            else:
-                if dados.startswith(b'\xc0'):
-                    if self.buffer != b'':
-                        self.send_callback(self.buffer)
-                        self.buffer = b''
+        # Separando datagramas no byte separador
+        dados = dados.split(b"\xc0")
 
-                    if dados.endswith(b'\xc0'):
-                        dados = dados.replace(b'\xdb\xdd', b'\xdb')
-                        dados = dados.replace(b'\xdb\xdc', b'\xc0')
-                        self.send_callback(dados.split(b'\xc0')[1])
-                    else:
-                        self.buffer = self.buffer.replace(b'\xdb\xdd', b'\xdb')
-                        self.buffer = self.buffer.replace(b'\xdb\xdc', b'\xc0')
-                        self.buffer += dados.split(b'\xc0')[1]
-                else:
-                    if dados.endswith(b'\xc0'):
-                        self.buffer += dados.split(b'\xc0')[0]
-                        
-                        mensagens = self.buffer.split(b'\xc0')
-                        for msg in mensagens:
-                            self.send_callback(msg)
+        # Armazenando o datagrama residual (último elemento do array dados) no buffer
+        self.buffer = dados[-1]
 
-                        self.buffer = b''
-                    else:    
-                        self.buffer += dados         
+        # Enviando todos os datagramas completos (demais elementos do array) à camada superior
+        for datagrama in dados[:-1]:
+            if datagrama != b"":
+                try:
+                    self.callback(self._parse_datagrama(datagrama))
+                except:
+                    import traceback
+
+                    traceback.print_exc()
+
+    def _escape_datagrama(self, datagrama):
+        return (
+            b"\xc0"
+            + datagrama.replace(b"\xdb", b"\xdb\xdd").replace(b"\xc0", b"\xdb\xdc")
+            + b"\xc0"
+        )
+
+    def _parse_datagrama(self, datagrama):
+        return datagrama.replace(b"\xdb\xdc", b"\xc0").replace(b"\xdb\xdd", b"\xdb")
